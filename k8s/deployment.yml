@@ -1,0 +1,51 @@
+# deployment file
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deploy-app
+  namespace: smartdeploy
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1 # zero down time deploys
+
+  selector:
+    matchLabels:
+      app: smartdeploy
+  template:
+    metadata:
+      labels:
+        app: smartdeploy
+    spec:
+      containers:
+        - name: app
+          image: sumeruc/smartdeploy-app:latest
+          ports:
+            - ContainerPort: 3000
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+
+# readiness probe prevents the traffic from reaching a pod until its truly ready.
