@@ -1,0 +1,30 @@
+# kuberneets deployment via helm
+replicaCount: 2
+
+image:
+  repository: registry.gitlab.com/chougulesumeru/ai-code-reviewer
+  tag: latest
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 3000
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "250m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+env:
+  - name: ANTHROPIC_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: ai-reviewer-secrets
+        key: anthropic-api-key
+
+monitoring:
+  enabled: true
+  serviceMonitor: true
