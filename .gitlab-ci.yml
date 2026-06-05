@@ -1,0 +1,112 @@
+# .gitlab-ci.yml - agentic Ai code review pipeline
+image: python:3.11-slim
+
+variables:
+  DOCKER_IMAGE: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+  DOCER_TLS_CERTDIR: " "
+
+stages:
+  - lint
+  - test
+  - security-scan
+  - ai-review
+  - build
+  - deploy
+  - notify
+
+# -----stage 1:- lint
+lint-code:
+  stage: lint
+  script:
+    - pip install flake8 black mypy --quiet
+    - flake8 app/ --max-line-length=100
+    - black app/ --check
+    - mypy app/ --ignore-missing-imports
+  only:
+    - merge_requests
+    - main
+
+# ----stage 2:- test
+unit-tests:
+  stage: test
+  script:
+    - pip install -r requiremenets.txt pytest pytest-cov
+    - pytest tests/ -v --cov=app --cov-reports=xml
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+#------stage 3:- security scan
+security-scan:
+  stage: security-scan
+  image: python:.312-slim
+  script:
+    - pip install bandit safety --quiet
+    - bandit -r app/ -ll
+    - safety check -r requiremenets.txt
+  allow_failure: true
+
+# ------stage 4: AI Agent review
+ai-code-review:
+  stage: ai-review
+  image: python:3.11-slim
+  only:
+    - merge_requests
+  script:
+    - pip install antropic python-gitlab requets --quiet
+    - python scripts/ai-review.py
+  variables:
+    GIT_DEPTH: "0"
+
+# -------stage 5: Docker build
+build-image:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER
+      -p $CI_REGISTRY_PASSWORD  $CI_REGISTRY
+  script:
+    - docker build -t $DOCKER_IMAGE .
+    - docker push $DOCKER_IMAGE
+    - docker tag $DOCKER_IMAGE $CI_REGISTRY_IMAGE:latest
+    - docker push $CI_REGISTRY_IMAGE:latest
+  only:
+    - main
+
+# -----stage 6: deploy to k8s
+deploy-production:
+  stage: deploy
+  image: alpine/helm:3.14.0
+  environment:
+    name: production
+    url: https://ai-reviewer.yourapp.com
+  script:
+    - mkdir -p ~/.kube
+    - echo "$KUBE_CONFIG" | base64 > ~/.kube/config
+    - helm upgrade --install ai-reviwer ./heml/
+      --set image.tag=$CI_COMMIT_SHORT_SHA
+      --set image.repository=$CI_REGISTRY_IMAGE
+      --namespace ai-tools --create-namespace
+  only:
+    - main
+  when: manual 
+
+# ------stage 7: notify
+notify-slack:
+  stage: notify
+  script:
+    - |
+      STATUS= "SUCCESS"
+      if ["$CI_JOB_SUCCESS" = "failed"]; then
+         STATUS= "FAILED"
+      fi
+      curl -X POST $SLACK_WEBHOOK_URL
+        -H 'Content-type:application/json' \
+        -d "{\"text\": \"$STATUS pipeline #$CI_PIPELINE_ID for $CI_PROJECT_NAME on $CI_COMMIT_REF_NAME\"}"
+
+  when: always
